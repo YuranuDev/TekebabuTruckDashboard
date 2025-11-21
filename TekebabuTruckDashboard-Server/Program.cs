@@ -1,7 +1,12 @@
-﻿using WMPLib;
+﻿using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
+using System;
+using System.Data;
+using System.Net;
 using System.Net.WebSockets;
+using System.Xml.Linq;
 using vJoyInterfaceWrap;
-using Newtonsoft.Json;
+using WMPLib;
 
 namespace TekebabuTruckDashboard_Server
 {
@@ -12,7 +17,7 @@ namespace TekebabuTruckDashboard_Server
         public static ConsoleFormat console = new ConsoleFormat();
         public static Software softwareSettings = new Software();
 
-        public static string FilePath_Settings = Path.Combine(AppContext.BaseDirectory, "Settings", "setttings.json");
+        public static string FilePath_Settings = Path.Combine(AppContext.BaseDirectory, "Settings", "settings.json");
         public static string touchPath = Path.Combine(AppContext.BaseDirectory, "Sounds", "touch.wav");
 
         static void Main(string[] args)
@@ -70,18 +75,320 @@ namespace TekebabuTruckDashboard_Server
 
         static void LoadSettings()
         {
-            // Load Software Settings
-            try
-            {
-                JsonManager jsonManager = new JsonManager();
-                jsonManager.JsonFilePath = FilePath_Settings;
+            softwareSettings = new Software();
 
-                softwareSettings = jsonManager.LoadJson<Software>();
-                console.Info("Softwareの読み込み完了", nameof(Program));
-            }
-            catch (Exception ex)
+            JsonManager jsonL = new JsonManager();
+            jsonL.JsonFilePath = FilePath_Settings;
+
+            // ファイルの存在を確認し、存在したらロード、存在しなければ初期設定を作成
+            if (!File.Exists(FilePath_Settings))
             {
-                console.Error($"Error loading Software settings: {ex.Message}", nameof(Program));
+                jsonL.LoadJson<Software>(true); // ファイルがなければ作成
+
+                // 設定をコンソールで聞き出す
+                console.Info("初回起動のため、Software設定を作成します。", nameof(Program));
+                console.Info("WebSocketサーバーのアドレスを入力してください (例:localhost, 127.0.0.1)", nameof(Program));
+                console.Info("(「*」を使用するとLAN内の他クライアントPCがこのPCに接続できるようになります)", nameof(Program));
+                console.Info("デフォルト: * ", nameof(Program));
+
+                string address = "";
+
+                while (string.IsNullOrEmpty(address))
+                {
+                    console.Info("WebSocket Address (空白でデフォルト値): ", nameof(Program));
+                    address = Console.ReadLine();
+
+                    if (address.ToLower() == "localhost" || address == "*" || IPAddress.TryParse(address, out IPAddress? ip))
+                    {
+                        softwareSettings.WebSocket.Address = address;
+                    }
+                    else if (string.IsNullOrEmpty(address))
+                    {
+                        address = "*";
+                        softwareSettings.WebSocket.Address = address;
+                    }
+                    else
+                    {
+                        console.Error("無効なアドレスです。再度入力してください。", nameof(Program));
+                        address = "";
+                    }
+                }
+
+                console.Info(@"WebSocketのポート番号を入力してください。: ", nameof(Program));
+                console.Info("デフォルト: 22100 ", nameof(Program));
+
+                string sport = "";
+
+                while (string.IsNullOrEmpty(sport))
+                {
+                    console.Info("WebSocket Port (空白でデフォルト値): ", nameof(Program));
+                    sport = Console.ReadLine();
+
+                    if (string.IsNullOrEmpty(sport))
+                    {
+                        sport = "22100";
+                    }
+
+                    if (int.TryParse(sport, out int port))
+                    {
+                        if (port < 1 || port > 65535)
+                        {
+                            console.Warning("ポート番号は1から65535の間で指定してください。再度入力してください。", nameof(Program));
+                            sport = "";
+                            continue;
+                        }
+                        softwareSettings.WebSocket.Port = port;
+                    }
+                    else if (!string.IsNullOrEmpty(sport))
+                    {
+                        console.Warning("無効なポート番号です。再度入力してください。", nameof(Program));
+                        sport = "";
+                    }
+                }
+
+                jsonL.SaveJson<Software>(softwareSettings);
+
+                if (address == "*")
+                {
+                    console.Warning("外部PCがアクセスする場合、ファイアーウォール、URLACLの許可が必要になる可能性があります。", nameof(Program));
+                    console.Warning("ファイアーウォール,、URLACLの設定を変更しますか？", nameof(Program));
+                    console.Warning("(許可しない場合、LAN内の他PCから接続できない可能性があります。)", nameof(Program));
+
+                    console.Warning("y/n: ", nameof(Program));
+                    string fwinput = Console.ReadLine();
+
+                    if (!string.IsNullOrEmpty(fwinput))
+                    {
+                        if (fwinput.ToLower() == "y" || fwinput.ToLower() == "yes")
+                        {
+                            try
+                            {
+                                string ruleName = "TekebabuTruckDashboard-Server WebSocket";
+                                string portStr = softwareSettings.WebSocket.Port.ToString();
+
+                                // もとからルールがあるか確認
+                                System.Diagnostics.ProcessStartInfo checkPsi = new System.Diagnostics.ProcessStartInfo("netsh", $"advfirewall firewall show rule name=\"{ruleName}\"")
+                                {
+                                    RedirectStandardOutput = true,
+                                    RedirectStandardError = true,
+                                    UseShellExecute = false,
+                                    CreateNoWindow = true
+                                };
+
+                                System.Diagnostics.Process checkProc = System.Diagnostics.Process.Start(checkPsi);
+                                checkProc.WaitForExit();
+
+                                string output = "";
+
+                                try
+                                {
+                                    output = checkProc.StandardOutput.ReadToEnd();
+                                    console.Debug($"ファイアーウォールルール確認出力: {output}", nameof(Program));
+                                }
+                                catch (Exception ex)
+                                {
+                                    console.Error($"ファイアーウォールルール確認出力の取得に失敗しました: {ex.Message}", nameof(Program));
+                                }
+
+                                if (output.Contains("No rules match the specified criteria"))
+                                {
+                                    console.Info("既存のファイアーウォールルールは見つかりませんでした。新規作成を続行します。", nameof(Program));
+
+                                    // ファイアーウォールのルールを追加
+                                    System.Diagnostics.ProcessStartInfo psi = new System.Diagnostics.ProcessStartInfo("netsh", $"advfirewall firewall add rule name = \"{ruleName}\" dir=in action=allow protocol=TCP localport=22100")
+                                    {
+                                        Verb = "runas",
+                                        CreateNoWindow = true,
+                                        UseShellExecute = true
+                                    };
+                                    System.Diagnostics.Process proc = System.Diagnostics.Process.Start(psi);
+                                    proc.WaitForExit();
+
+                                    try
+                                    {
+                                        string output2 = proc.StandardOutput.ReadToEnd();
+                                        console.Debug($"ファイアーウォールルール追加出力: {output2}", nameof(Program));
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        console.Error($"ファイアーウォールルール追加出力の取得に失敗しました: {ex.Message}", nameof(Program));
+                                    }
+
+                                    console.Info("ファイアーウォールの設定を追加しました。", nameof(Program));
+                                }
+                                else
+                                {
+                                    console.Info("既存のファイアーウォールルールが見つかりました。削除、新規作成します。", nameof(Program));
+                                    // 既存のルールを削除
+                                    System.Diagnostics.ProcessStartInfo delPsi = new System.Diagnostics.ProcessStartInfo("netsh", $"advfirewall firewall delete rule name=\"{ruleName}\"")
+                                    {
+                                        Verb = "runas",
+                                        CreateNoWindow = true,
+                                        UseShellExecute = true
+                                    };
+                                    System.Diagnostics.Process delProc = System.Diagnostics.Process.Start(delPsi);
+                                    delProc.WaitForExit();
+
+                                    try
+                                    {
+                                        string delOutput = delProc.StandardOutput.ReadToEnd();
+                                        console.Debug($"ファイアーウォールルール削除出力: {delOutput}", nameof(Program));
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        console.Error($"ファイアーウォールルール削除出力取得に失敗しました: {ex.Message}", nameof(Program));
+                                    }
+
+                                    console.Info("既存のファイアーウォールルールを削除しました。", nameof(Program));
+
+                                    // 新規作成
+                                    System.Diagnostics.ProcessStartInfo psi = new System.Diagnostics.ProcessStartInfo("netsh", $"advfirewall firewall add rule name = \"{ruleName}\" dir=in action=allow protocol=TCP localport={portStr}")
+                                    {
+                                        Verb = "runas",
+                                        CreateNoWindow = true,
+                                        UseShellExecute = true
+                                    };
+                                    System.Diagnostics.Process proc = System.Diagnostics.Process.Start(psi);
+                                    proc.WaitForExit();
+
+                                    try 
+                                    {
+                                        string output2 = proc.StandardOutput.ReadToEnd();
+                                        console.Debug($"ファイアーウォールルール追加出力: {output2}", nameof(Program));
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        console.Error($"ファイアーウォールルール追加出力の取得に失敗しました: {ex.Message}", nameof(Program));
+                                    }
+
+                                    console.Info("ファイアーウォールの設定を追加しました。", nameof(Program));
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                console.Error($"ファイアーウォールの設定に失敗しました: {ex.Message}", nameof(Program));
+                            }
+
+                            // URLACLの設定を追加
+                            try
+                            {
+                                string url = $"http://*:{softwareSettings.WebSocket.Port}/";
+                                System.Diagnostics.ProcessStartInfo psi2 = new System.Diagnostics.ProcessStartInfo("netsh", $"http add urlacl url={url} user=Everyone")
+                                {
+                                    Verb = "runas",
+                                    CreateNoWindow = true,
+                                    UseShellExecute = true
+                                };
+
+                                System.Diagnostics.Process proc2 = System.Diagnostics.Process.Start(psi2);
+                                proc2.WaitForExit();
+
+                                try 
+                                { 
+                                    string output3 = proc2.StandardOutput.ReadToEnd();
+                                    console.Debug($"URLACL追加出力: {output3}", nameof(Program));
+                                }
+                                catch (Exception ex)
+                                {
+                                    console.Error($"URLACL追加出力の取得に失敗しました: {ex.Message}", nameof(Program));
+                                }
+
+                                console.Info("URLACLの設定を追加しました。", nameof(Program));
+                            }
+                            catch (Exception ex)
+                            {
+                                console.Error($"URLACLの設定に失敗しました: {ex.Message}", nameof(Program));
+                            }
+                        }
+                        else if (fwinput.ToLower() == "n" || fwinput.ToLower() == "no")
+                        {
+                            console.Info("ファイアーウォール、URLACLの設定をスキップしました。", nameof(Program));
+                        }
+                    }
+
+                    console.Info("Software設定の作成が完了しました。", nameof(Program));
+                }
+            }
+            else
+            {
+                // 設定ファイルを読み込む
+                try
+                {
+                    softwareSettings = jsonL.LoadJson<Software>(false);
+
+                    // 値が適切でない場合、ファイルを削除して再起動(初期設定)
+                    if (softwareSettings.vJoy.DeviceID == -1 || softwareSettings.vJoy.DeviceID < 1 || softwareSettings.vJoy.DeviceID > 16)
+                    {
+                        console.Error("Software設定のvJoy DeviceIDが不正です。設定ファイルを削除しますか？", nameof(Program));
+                        console.Error("y/n: ", nameof(Program));
+                        string input = Console.ReadLine();
+
+                        if (input != null)
+                        {
+                            if (input.ToLower() == "y" || input.ToLower() == "yes")
+                            {
+                                File.Delete(FilePath_Settings);
+                                Environment.Exit(1);
+                            }
+                            else if (input.ToLower() == "n" || input.ToLower() == "no")
+                            {
+                                console.Error("プログラムを終了します。", nameof(Program));
+                                Environment.Exit(1);
+                            }
+
+                        }
+                    }
+
+                    if (softwareSettings.WebSocket.Port == -1 || softwareSettings.WebSocket.Port < 1 || softwareSettings.WebSocket.Port > 65535)
+                    {
+                        console.Error("Software設定のWebSocket Portが不正です。設定ファイルを削除しますか？", nameof(Program));
+                        console.Error("y/n: ", nameof(Program));
+                        string input2 = Console.ReadLine();
+                        if (input2 != null)
+                        {
+                            if (input2.ToLower() == "y" || input2.ToLower() == "yes")
+                            {
+                                File.Delete(FilePath_Settings);
+                                Environment.Exit(1);
+
+                            }
+                            else if (input2.ToLower() == "n" || input2.ToLower() == "no")
+                            {
+                                console.Error("プログラムを終了します。", nameof(Program));
+                                Environment.Exit(1);
+                            }
+                        }
+                    }
+
+                    if (!string.IsNullOrEmpty(softwareSettings.WebSocket.Address))
+                    {
+                        if (softwareSettings.WebSocket.Address.ToLower() != "localhost" && softwareSettings.WebSocket.Address.ToLower() != "*" && !IPAddress.TryParse(softwareSettings.WebSocket.Address, out IPAddress? ip))
+                        {
+                            console.Error("Software設定のWebSocket Addressが不正です。設定ファイルを削除しますか？", nameof(Program));
+                            console.Error("y/n: ", nameof(Program));
+                            string input3 = Console.ReadLine();
+                            if (input3 != null)
+                            {
+                                if (input3.ToLower() == "y" || input3.ToLower() == "yes")
+                                {
+                                    File.Delete(FilePath_Settings);
+                                    Environment.Exit(1);
+                                }
+                                else if (input3.ToLower() == "n" || input3.ToLower() == "no")
+                                {
+                                    console.Error("プログラムを終了します。", nameof(Program));
+                                    Environment.Exit(1);
+                                }
+                            }
+                        }
+                    }
+
+                    console.Info("Software設定を読み込みました。", nameof(Program));
+                }
+                catch (Exception ex)
+                {
+                    console.Error($"Software設定の読み込みに失敗しました: {ex.Message}", nameof(Program));
+                }
             }
         }
 
@@ -173,6 +480,7 @@ namespace TekebabuTruckDashboard_Server
                 try { player.settings.volume = 100; } catch { /* 設定不可でも継続 */ }
 
                 player.URL = touchPath;
+
                 player.controls.play();
 
                 // 再生終了時にリソースを解放するハンドラ

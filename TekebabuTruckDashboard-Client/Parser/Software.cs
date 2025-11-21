@@ -6,8 +6,8 @@
 
 internal class SWebSocket
 {
-    public string Address { get; set; } = "localhost";
-    public int Port { get; set; } = 22100;
+    public string Address { get; set; } = "";
+    public int Port { get; set; } = -1;
 }
 
 internal class vJoySettings

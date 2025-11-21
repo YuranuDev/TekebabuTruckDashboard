@@ -19,6 +19,8 @@ public class WebSocketServer
 
     public WebSocketServer(string url)
     {
+        console.Info(url, nameof(WebSocketServer));
+
         listener = new HttpListener();
         listener.Prefixes.Add(url);
 

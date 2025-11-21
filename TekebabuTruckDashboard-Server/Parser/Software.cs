@@ -13,12 +13,11 @@ internal class Software
 
 internal class SWebSocket
 {
-    public string Address { get; set; } = "localhost";
-    public int Port { get; set; } = 22100;
+    public string Address { get; set; } = "";
+    public int Port { get; set; } = -1;
 }
 
 internal class vJoySettings
 {
-    [Range(1, 16, ErrorMessage = "vJoy Device ID must be between 1 and 16.")]
     public int DeviceID { get; set; } = 1;
 }

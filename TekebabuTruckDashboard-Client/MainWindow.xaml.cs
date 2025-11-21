@@ -5,6 +5,7 @@ using System.Windows;
 using System.Windows.Input;
 using System.Windows.Controls;
 using WMPLib;
+using System.Net;
 
 namespace TekebabuTruckDashboard_Client
 {
@@ -23,7 +24,7 @@ namespace TekebabuTruckDashboard_Client
         internal static Software softwareSettings = new Software();
         internal static string touchPath = Path.Combine(AppContext.BaseDirectory, "Sounds", "touch.wav");
 
-        public static string FilePath_Settings = Path.Combine(AppContext.BaseDirectory, "Settings", "setttings.json");
+        public static string FilePath_Settings = Path.Combine(AppContext.BaseDirectory, "Settings", "settings.json");
 
         private async void Window_Loaded(object sender, RoutedEventArgs e)
         {
@@ -65,24 +66,148 @@ namespace TekebabuTruckDashboard_Client
             };
 
             console.Info($"Connecting to WebSocket Server at {serverUrl}", nameof(MainWindow));
-            await client.ConnectAsync();
+            try
+            {
+                await client.ConnectAsync();
+            }
+            catch (Exception ex)
+            {
+                console.Error($"WebSocket Client Connection Failed: {ex.Message}", nameof(MainWindow));
+                return;
+            }
+
             console.Info($"Connected", nameof(MainWindow));
         }
 
         private void LoadSettings()
         {
-            // Load Software Settings
-            try
-            {
-                JsonManager jsonManager = new JsonManager();
-                jsonManager.JsonFilePath = FilePath_Settings;
+            softwareSettings = new Software();
 
-                softwareSettings = jsonManager.LoadJson<Software>();
-                console.Info("Softwareの読み込み完了", nameof(MainWindow));
-            }
-            catch (Exception ex)
+            JsonManager jsonL = new JsonManager();
+            jsonL.JsonFilePath = FilePath_Settings;
+
+            // ファイルの存在を確認し、存在したらロード、存在しなければ初期設定を作成
+            if (!File.Exists(FilePath_Settings))
             {
-                console.Error($"Error loading Software settings: {ex.Message}", nameof(MainWindow));
+                jsonL.LoadJson<Software>(true); // ファイルがなければ作成
+
+                // 設定をコンソールで聞き出す
+                console.Info("初回起動のため、Software設定を作成します。", nameof(MainWindow));
+                console.Info("WebSocketサーバーのアドレスを入力してください (例:localhost, 127.0.0.1)", nameof(MainWindow));
+
+                string address = "";
+
+                while (string.IsNullOrEmpty(address))
+                {
+                    console.Info("WebSocket Address: ", nameof(MainWindow));
+                    address = Console.ReadLine();
+
+                    if (address.ToLower() == "localhost" || address == "*" || IPAddress.TryParse(address, out IPAddress ip))
+                    {
+                        softwareSettings.WebSocket.Address = address;
+                    }
+                    else if (string.IsNullOrEmpty(address))
+                    {
+                        address = "";
+                    }
+                    else
+                    {
+                        console.Error("無効なアドレスです。再度入力してください。", nameof(MainWindow));
+                        address = "";
+                    }
+                }
+
+                console.Info(@"WebSocketのポート番号を入力してください。: ", nameof(MainWindow));
+                console.Info("デフォルト: 22100 ", nameof(MainWindow));
+
+                string sport = "";
+
+                while (string.IsNullOrEmpty(sport))
+                {
+                    console.Info("WebSocket Port (空白でデフォルト値): ", nameof(MainWindow));
+                    sport = Console.ReadLine();
+
+                    if (string.IsNullOrEmpty(sport))
+                    {
+                        sport = "22100";
+                    }
+
+                    if (int.TryParse(sport, out int port))
+                    {
+                        if (port < 1 || port > 65535)
+                        {
+                            console.Warning("ポート番号は1から65535の間で指定してください。再度入力してください。", nameof(MainWindow));
+                            sport = "";
+                            continue;
+                        }
+                        softwareSettings.WebSocket.Port = port;
+                    }
+                    else if (!string.IsNullOrEmpty(sport))
+                    {
+                        console.Warning("無効なポート番号です。再度入力してください。", nameof(MainWindow));
+                        sport = "";
+                    }
+                }
+
+                jsonL.SaveJson<Software>(softwareSettings);
+            }
+            else
+            {
+                // 設定ファイルを読み込む
+                try
+                {
+                    softwareSettings = jsonL.LoadJson<Software>(false);
+
+                    if (softwareSettings.WebSocket.Port == -1 || softwareSettings.WebSocket.Port < 1 || softwareSettings.WebSocket.Port > 65535)
+                    {
+                        console.Error("Software設定のWebSocket Portが不正です。設定ファイルを削除しますか？", nameof(MainWindow));
+                        console.Error("y/n: ", nameof(MainWindow));
+                        string input2 = Console.ReadLine();
+                        if (input2 != null)
+                        {
+                            if (input2.ToLower() == "y" || input2.ToLower() == "yes")
+                            {
+                                File.Delete(FilePath_Settings);
+                                Application.Current.Shutdown();
+
+                            }
+                            else if (input2.ToLower() == "n" || input2.ToLower() == "no")
+                            {
+                                console.Error("プログラムを終了します。", nameof(MainWindow));
+                                Application.Current.Shutdown();
+                            }
+                        }
+                    }
+
+                    if (!string.IsNullOrEmpty(softwareSettings.WebSocket.Address))
+                    {
+                        if (softwareSettings.WebSocket.Address.ToLower() != "localhost" && softwareSettings.WebSocket.Address.ToLower() != "*" && !IPAddress.TryParse(softwareSettings.WebSocket.Address, out IPAddress ip))
+                        {
+                            console.Error("Software設定のWebSocket Addressが不正です。設定ファイルを削除しますか？", nameof(MainWindow));
+                            console.Error("y/n: ", nameof(MainWindow));
+                            string input3 = Console.ReadLine();
+                            if (input3 != null)
+                            {
+                                if (input3.ToLower() == "y" || input3.ToLower() == "yes")
+                                {
+                                    File.Delete(FilePath_Settings);
+                                    Application.Current.Shutdown();
+                                }
+                                else if (input3.ToLower() == "n" || input3.ToLower() == "no")
+                                {
+                                    console.Error("プログラムを終了します。", nameof(MainWindow));
+                                    Application.Current.Shutdown();
+                                }
+                            }
+                        }
+                    }
+
+                    console.Info("Software設定を読み込みました。", nameof(MainWindow));
+                }
+                catch (Exception ex)
+                {
+                    console.Error($"Software設定の読み込みに失敗しました: {ex.Message}", nameof(MainWindow));
+                }
             }
         }
 
