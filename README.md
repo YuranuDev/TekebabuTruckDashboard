@@ -2,8 +2,6 @@
 ETS2向け車両コントロールダッシュボード<br>
 vJoy仮想コントローラで動作します。
 
-工事中です。以下はまだ未完成だぜ
-
 ## ・How to Setup?
 1. https://github.com/shauleiz/vJoy/releases よりvJoyをインストール<br>
 2. 「Configure vJoy」を起動し、vJoy DeviceID 1を選択し、 ボタン数を32個に増やす<br>
