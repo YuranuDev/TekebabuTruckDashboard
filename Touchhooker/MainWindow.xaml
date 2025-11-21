@@ -1,0 +1,11 @@
+﻿<Window x:Class="TouchHold.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        Topmost="True"
+        WindowState="Maximized"
+        TouchDown="Window_TouchDown"
+        TouchUp="Window_TouchUp">
+</Window>
